@@ -1,0 +1,168 @@
+For each of the data files ("Google.csv", "Amazon.csv", and the samples), we want to parse the IDs out of each record. 
+
+The IDs are the first column of the file (they are URLs for Google, and alphanumeric strings for Amazon). 
+
+Omitting the headers, we load these data files into pair RDDs where the mapping ID is the key, and the value is a string consisting of the name/title, description, and manufacturer from the record.
+
+
+The file format of an Amazon line is:
+"id","title","description","manufacturer","price"
+
+The file format of a Google line is:
+"id","name","description","manufacturer","price"
+
+DATAFILE_PATTERN = '^(.+),"(.+)",(.*),(.*),(.*)'
+
+ else:
+        product = '%s %s %s' % (match.group(2), match.group(3), match.group(4))
+        return ((removeQuotes(match.group(1)), product), 1)
+
+==================================
+(ID, (NAME DESC MANUFACTURER))?
+==================================
+
+for line in googleSmall.take(3):
+    print 'google: %s: %s\n' % (line[0], line[1])
+
+for line in amazonSmall.take(3):
+    print 'amazon: %s: %s\n' % (line[0], line[1])
+
+
+
+google: http://www.google.com/base/feeds/snippets/11448761432933644608: spanish vocabulary builder "expand your vocabulary! contains fun lessons that both teach and entertain you'll quickly find yourself mastering new terms. includes games and more!" 
+
+google: http://www.google.com/base/feeds/snippets/8175198959985911471: topics presents: museums of world "5 cd-rom set. step behind the velvet rope to examine some of the most treasured collections of antiquities art and inventions. includes the following the louvre - virtual visit 25 rooms in full screen interactive video detailed map of the louvre ..." 
+
+google: http://www.google.com/base/feeds/snippets/18445827127704822533: sierrahome hse hallmark card studio special edition win 98 me 2000 xp "hallmark card studio special edition (win 98 me 2000 xp)" "sierrahome"
+
+amazon: b000jz4hqo: clickart 950 000 - premier image pack (dvd-rom)  "broderbund"
+
+amazon: b0006zf55o: ca international - arcserve lap/desktop oem 30pk "oem arcserve backup v11.1 win 30u for laptops and desktops" "computer associates"
+
+amazon: b00004tkvy: noah's ark activity center (jewel case ages 3-8)  "victory multimedia"
+
+
+def tokenize(string):
+    """ An implementation of input string tokenization that excludes stopwords
+    Args:
+        string (str): input string
+    Returns:
+        list: a list of tokens without stopwords
+    """
+    return [t for t in simpleTokenize(string) if t not in stopwords]
+
+def tf(tokens):
+    """ Compute TF
+    Args:
+        tokens (list of str): input list of tokens from tokenize
+    Returns:
+        dictionary: a dictionary of tokens to its TF values
+    """
+    tf_dict = {}
+    for t in tokens:
+         tf_dict[t] = tf_dict.get(t, 0) + 1
+    return dict((k, (v * 1.0)/len(tokens)) for (k, v) in tf_dict.iteritems())
+
+def idfs(corpus):
+    """ Compute IDF
+    Args:
+        corpus (RDD): input corpus
+    Returns:
+        RDD: a RDD of (token, IDF value)
+    """
+    N = corpus.count()
+    uniqueTokens = corpus.flatMap(lambda (x,y): list(set(y)))
+    tokenCountPairTuple = uniqueTokens.map(lambda x: (x, 1))
+    tokenSumPairTuple = tokenCountPairTuple.reduceByKey(lambda x,y: x+y)
+    return (tokenSumPairTuple.map(lambda (x,y): (x, N/(y*1.0))))
+
+idfsSmall = idfs(amazonRecToToken.union(googleRecToToken))
+
+def tfidf(tokens, idfs):
+    """ Compute TF-IDF
+    Args:
+        tokens (list of str): input list of tokens from tokenize
+        idfs (dictionary): record to IDF value
+    Returns:
+        dictionary: a dictionary of records to TF-IDF values
+    """
+    tfs = tf(tokens)
+    tfIdfDict = dict((t,(tfs[t] * idfs[t])) for t in tokens)
+    return tfIdfDict
+
+idfsSmallWeights = idfsSmall.collectAsMap()
+idfsSmallBroadcast = sc.broadcast(idfsSmallWeights)
+
+
+def dotprod(a, b):
+    """ Compute dot product
+    Args:
+        a (dictionary): first dictionary of record to value
+        b (dictionary): second dictionary of record to value
+    Returns:
+        dotProd: result of the dot product with the two input dictionaries
+    """
+    return sum([a[k] * b[k] for k in a.iterkeys()])
+
+def norm(a):
+    """ Compute square root of the dot product
+    Args:
+        a (dictionary): a dictionary of record to value
+    Returns:
+        norm: a dictionary of tokens to its TF values
+    """
+    return math.sqrt(sum([a[k] * a[k] for (k, v) in a.iteritems()]))
+
+def cossim(a, b):
+    """ Compute cosine similarity
+    Args:
+        a (dictionary): first dictionary of record to value
+        b (dictionary): second dictionary of record to value
+    Returns:
+        cossim: dot product of two dictionaries divided by the norm of the first dictionary and
+                then by the norm of the second dictionary
+    """
+    return dotprod(a,b) / (norm(a)*norm(b))
+
+def cosineSimilarity(string1, string2, idfsDictionary):
+    """ Compute cosine similarity between two strings
+    Args:
+        string1 (str): first string
+        string2 (str): second string
+        idfsDictionary (dictionary): a dictionary of IDF values
+    Returns:
+        cossim: cosine similarity value
+    """
+    w1 = tfidf(tokenize(string1), idfsDictionary)
+    w2 = tfidf(tokenize(string2), idfsDictionary)
+    return cossim(w1, w2)
+
+
+GOLDFILE_PATTERN = '^(.+),(.+)'
+
+The resulting RDD has elements of the form ("AmazonID GoogleURL", 'gold')
+
+amazonWeightsRDD = amazonFullRecToToken.map(lambda (x,y): (x, tfidf(y, idfsFullBroadcast.value)))
+googleWeightsRDD = googleFullRecToToken.map(lambda (x,y): (x, tfidf(y, idfsFullBroadcast.value)))
+
+amazonFullRecToToken = amazon.map(lambda (x, y): (x, tokenize(y)))
+googleFullRecToToken = google.map(lambda (x, y): (x, tokenize(y)))
+
+amazonNorms = amazonWeightsRDD.map(lambda (x,y): (x, norm(y)))
+amazonNormsBroadcast = sc.broadcast(amazonNorms.collectAsMap())
+googleNorms = googleWeightsRDD.map(lambda (x,y): (x, norm(y)))
+googleNormsBroadcast = sc.broadcast(googleNorms.collectAsMap())
+
+((ID, URL), token)
+commonTokens = (amazonInvPairsRDD
+                .join(googleInvPairsRDD)
+                .flatMap(lambda (x,y): swap((x,y)))
+                .distinct()
+                .cache())
+
+
+
+               
+
+
+

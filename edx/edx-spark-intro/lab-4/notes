@@ -1,0 +1,22 @@
+Each line in the ratings dataset (ratings.dat.gz) is formatted as:
+UserID::MovieID::Rating::Timestamp
+Each line in the movies (movies.dat) dataset is formatted as:
+MovieID::Title::Genres
+The Genres field has the format
+Genres1|Genres2|Genres3|...
+
+Parsing the two files yields two RDDS
+
+For each line in the ratings dataset, we create a tuple of (UserID, MovieID, Rating). We drop the timestamp because we do not need it for this exercise.
+
+For each line in the movies dataset, we create a tuple of (MovieID, Title). We drop the Genres because we do not need them for this exercise.
+
+(UserID, MovieID, Rating)
+ratingsRDD = rawRatings.map(get_ratings_tuple).cache()
+
+(MovieID, Title)
+moviesRDD = rawMovies.map(get_movie_tuple).cache()
+
+trainingRDD, validationRDD, testRDD = ratingsRDD.randomSplit([6, 2, 2], seed=0L)
+
+
